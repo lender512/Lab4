@@ -38,13 +38,16 @@ class BPTree{
         uint32_t dummy[1]; //Mejora la performance con estos extras bytes
     };
 
-    const unsigned additional_threads;
+    
     Index root; 
     std::vector<Node> mem; //Toda la memoria dinámica que se usara
 
     Scheduler scheduler;
     std::mutex result_lock;
-    unsigned result_countdown;
+    std::condition_variable result_cv;
+    int result_countdown;
+    const unsigned workers;
+    unsigned scheduled_jobs;
 
     void eraseInternal(Index internal, int i){
         Index current = CHILD(internal, i + 1);
@@ -55,7 +58,7 @@ class BPTree{
     }
 
     public:
-    BPTree(unsigned nodes_reservation, unsigned max_batch_sz, unsigned additional_threads): additional_threads{additional_threads}, scheduler{max_batch_sz, additional_threads, true}{
+    BPTree(unsigned nodes_reservation, unsigned workers): workers{workers}, scheduler{(degree+1)*2, workers, false}{
         root = null;
         mem.reserve(nodes_reservation); //Evitar allocaciones
         mem.emplace_back();
@@ -406,14 +409,14 @@ class BPTree{
     }
 
     /* PARALLEL (FOR MULTIPLE LOOKUPS) */
-    void contains_r(std::vector<Key>& keys, std::vector<bool>& result, int from, int to, Index current){
+    void contains_r(std::vector<Key>& keys, std::vector<int>& result, int from, int to, Index current){
         auto& _node = mem[current];
         if(IS_NOT_LEAF(current)){
             if((to - from) > 1){
                 int ndivisions = 0;
                 int divisions[degree + 1];
                 divisions[0] = from;
-                for(int i = from; i<to;){ // <--- CHECK IF THIS WORKS CORRECTLY (TEST ALGORITHM IN A DUMMY PROGRAM)
+                for(int i = from; i<to;){
                     auto& _input_key = keys[i];
                     auto& _node_key = KEY(current, ndivisions);
                     if(keys[i] < KEY(current, ndivisions)) ++i;
@@ -430,9 +433,7 @@ class BPTree{
                     const int child_to = divisions[i+1];
                     if(child_from < child_to){
                         const Index child = CHILD(current, i);
-                        scheduler.schedule([this, &keys, &result, child_from, child_to, child]{
-                            this->contains_r(keys, result, child_from, child_to, child);
-                        });
+                        contains_r(keys, result, child_from, child_to, child);
                     }
                 }
                 return;
@@ -448,7 +449,8 @@ class BPTree{
 
         }
 
-        for(int i = 0, j = from; i<SIZE(current) && j<to;) {
+        int j = from;
+        for(int i = 0; i<SIZE(current) && j<to;) {
             if(KEY(current, i) < keys[j]){
                 i += 1;
             }
@@ -456,32 +458,138 @@ class BPTree{
                 j += 1;
             }
             else {
-                result[j] = true;
+                result[j] = 1;
                 i += 1;
                 j += 1;
             }
         }
-        std::lock_guard<std::mutex> lock(result_lock);
-        result_countdown -= (to-from);
-        if(result_countdown == 0) {
-            /* and now for the tricky bit... */
-            for (int i = 1; i < additional_threads; i++)
-            {
-                scheduler.schedule(scheduler.SyncPointWait);
+
+
+        bool result_ready;
+        {
+            std::lock_guard<std::mutex> lock(result_lock);
+            result_countdown -= (to-from);
+            result_ready = result_countdown <= 0;
+        }
+        if(result_ready) {
+            result_cv.notify_one();
+        }
+    }
+
+    void contains_t(std::vector<Key>& keys, std::vector<int>& result, int from, int to, Index current){
+        auto& _node = mem[current];
+        if(IS_NOT_LEAF(current)){
+            if((to - from) > 1){
+                int ndivisions = 0;
+                int divisions[degree + 1];
+                divisions[0] = from;
+                int biggest_division = 0;
+                int biggest_division_sz = 0;
+                for(int i = from; i<to;){
+                    auto& _input_key = keys[i];
+                    auto& _node_key = KEY(current, ndivisions);
+                    if(keys[i] < KEY(current, ndivisions)) ++i;
+                    else {
+                        const int division_sz = i - divisions[ndivisions];
+                        if(division_sz > biggest_division_sz){
+                            biggest_division = ndivisions;
+                            biggest_division_sz = division_sz;
+                        }
+                        divisions[++ndivisions] = i;
+                        if(ndivisions == SIZE(current)) break;
+                    }
+                }
+                const int division_sz = to - divisions[ndivisions];
+                if(division_sz > biggest_division_sz){
+                    biggest_division = ndivisions;
+                    biggest_division_sz = division_sz;
+                }
+                divisions[++ndivisions] = to;
+                scheduled_jobs += ndivisions;
+                
+                for(int i = 0; i<biggest_division; ++i){
+                    const int child_from = divisions[i];
+                    const int child_to = divisions[i+1];
+                    const Index child = CHILD(current, i);
+                    if(child_from < child_to){
+                        scheduler.schedule([this, &keys, &result, child_from, child_to, child]{
+                            this->contains_r(keys, result, child_from, child_to, child);
+                        });
+                    }
+                }
+
+                for(int i = biggest_division + 1; i<ndivisions; ++i){
+                    const int child_from = divisions[i];
+                    const int child_to = divisions[i+1];
+                    const Index child = CHILD(current, i);
+                    if(child_from < child_to){
+                        scheduler.schedule([this, &keys, &result, child_from, child_to, child]{
+                            this->contains_r(keys, result, child_from, child_to, child);
+                        });
+                    }
+                }
+
+                const int child_from = divisions[biggest_division];
+                const int child_to = divisions[biggest_division+1];
+                const Index child = CHILD(current, biggest_division);
+                if(scheduled_jobs >= workers){
+                    scheduler.schedule([this, &keys, &result, child_from, child_to, child]{
+                        this->contains_r(keys, result, child_from, child_to, child);
+                    });
+                    return;
+                }
+                contains_t(keys, result, child_from, child_to, child);
+                return;
             }
-            scheduler.schedule(scheduler.SyncPointWake);
+
+            do{
+                int i = 0;
+                for(; i< SIZE(current); ++i){
+                    if(keys[to] < KEY(current, i)) break;
+                }
+                current = CHILD(current, i);
+            }while(IS_NOT_LEAF(current));
+
+        }
+
+        int j = from;
+        for(int i = 0; i<SIZE(current) && j<to;) {
+            if(KEY(current, i) < keys[j]){
+                i += 1;
+            }
+            else if(KEY(current, i) > keys[j]){
+                j += 1;
+            }
+            else {
+                result[j] = 1;
+                i += 1;
+                j += 1;
+            }
+        }
+
+
+        bool result_ready;
+        {
+            std::lock_guard<std::mutex> lock(result_lock);
+            result_countdown -= (to-from);
+            result_ready = result_countdown <= 0;
+        }
+        if(result_ready) {
+            result_cv.notify_one();
         }
     }
 
     /* PARALLEL (FOR MULTIPLE LOOKUPS) */
-    std::vector<bool> containsMultiple(std::vector<Key>& keys) {
-        std::vector<bool> result(keys.size(),false);
+    std::vector<int> containsMultiple(std::vector<Key>& keys) {
+        std::vector<int> result(keys.size(),0);
         if(root == null) return result;
-        //std::sort(keys.begin(),keys.end());
         result_countdown = keys.size();
-        contains_r(keys, result, 0, keys.size(), root);
-        // while(result_countdown){}
-        scheduler.SyncPointWait();
+        scheduled_jobs = 0;
+        contains_t(keys, result, 0, keys.size(), root);
+        std::unique_lock<std::mutex> lock(result_lock);
+        result_cv.wait(lock, [this]{return result_countdown <= 0;});
+        lock.unlock();
+        //scheduler.scheduleSyncPoint();
         return result;
     }
 
