@@ -7,6 +7,7 @@
 #include <iostream>
 #include <cstring>
 #include <thread>
+#include <mutex>
 
 //Macros para facilitar el uso de un vector como gestor de memoria
 #define SIZE(i) mem[i].size
@@ -30,6 +31,8 @@ class BPTree{
     static constexpr Size capacity = degree-1;
     static constexpr Size mid = degree/2;
     static constexpr Size min = (degree/2) + (degree%2) - 1;
+    static constexpr Size max_lvl = 20;
+    static constexpr Size max_unbalance = 4;
     
     struct Node{
         Size size;
@@ -41,6 +44,8 @@ class BPTree{
     
     Index root; 
     std::vector<Node> mem; //Toda la memoria dinámica que se usara
+    std::mutex mem_mtx;
+    unsigned unbalance;
 
     const unsigned workers;
     unsigned free_workers;
@@ -54,7 +59,7 @@ class BPTree{
     }
 
     public:
-    BPTree(unsigned nodes_reservation, unsigned workers = 0): workers{workers}{
+    BPTree(unsigned nodes_reservation, unsigned workers = 0): workers{workers}, unbalance{0}{
         root = null;
         mem.reserve(nodes_reservation); //Evitar allocaciones
         mem.emplace_back();
@@ -71,7 +76,7 @@ class BPTree{
         } //Si no hay root
         
         int level = 0; //Head del stack
-        Index parent[20]; //Stack de parents
+        Index parent[max_lvl]; //Stack de parents
         Index current = root;
         while(IS_NOT_LEAF(current)){
             parent[level++] = current;
@@ -185,8 +190,8 @@ class BPTree{
         
         int i;
         int level = 0; //Head del stack
-        int child[14]; //Stack de childs
-        Index parent[14]; //Stack de parents
+        int child[max_lvl]; //Stack de childs
+        Index parent[max_lvl]; //Stack de parents
         Index current = root;
         Index internal = null;
         int iinternal;
@@ -492,7 +497,7 @@ class BPTree{
                 divisions[++ndivisions] = to;
 
 
-                
+                const unsigned initial_workers = free_workers;
                 if(free_workers <= ndivisions){
                     int i = 0;
                     while(i<ndivisions){
@@ -510,7 +515,7 @@ class BPTree{
                             ++i;
                         }
                         for(auto& t : threads) t.join();
-                        free_workers = workers;
+                        free_workers = initial_workers;
                     }
                 }else{
                     std::vector<std::thread> threads;
@@ -609,8 +614,187 @@ class BPTree{
         return false; //Si no hay key, termina
     }
 
+
+    void insert_r(std::vector<Key> const& keys, int from, int to, Index& sub_root){
+        for(int _i = from; _i<to; ++_i){
+            const Key key = keys[_i];
+            if(sub_root == null){ 
+                sub_root = NEW_NODE;
+                SIZE(sub_root) = 1;
+                KEY(sub_root, 0) = key;
+                continue;
+            } //Si no hay root
+            
+            int level = 0; //Head del stack
+            Index parent[max_lvl]; //Stack de parents
+            Index current = sub_root;
+            while(IS_NOT_LEAF(current)){
+                parent[level++] = current;
+                int i = 0;
+                for(; i< SIZE(current); ++i){
+                    if(key < KEY(current, i)) break;
+                }
+                current = CHILD(current, i);
+            } //Encontrar nodo hoja y el camino de parents
+
+            int i = SIZE(current) - 1;
+            SIZE(current) += 1;
+            while(i>= 0 && key < KEY(current, i)){
+                KEY(current, i + 1) = KEY(current, i);
+                i -= 1;
+            }
+            KEY(current, i + 1) = key; //Insertar el key
+            
+            
+            if(SIZE(current) <= capacity) continue; //Si no hay overflow, termina
+
+            SIZE(current) = mid;
+            Index other_half = NEW_NODE;
+            SIZE(other_half) = degree - mid;
+            memcpy(&(KEY(other_half,0)), &(KEY(current,mid)), sizeof(Key)*(degree - mid));
+            NEXT(other_half) = NEXT(current);
+            NEXT(current) = other_half;
+                        //Se hace split y el centro se queda en el nodo hoja y tambien sube
+                        //Se actualiza la double linked list
+
+            do{
+                if(current == sub_root){
+                    {
+                        std::lock_guard<std::mutex> lock(mem_mtx);
+                        sub_root = NEW_NODE;
+                    }
+                    
+                    SIZE(sub_root) = 1;
+                    KEY(sub_root, 0) = KEY(current, SIZE(current));
+                    CHILD(sub_root, 0) = current;
+                    CHILD(sub_root, 1) = other_half;
+                    break;
+                } //Si es el root, se crear otro root y termina
+            
+                Index child = other_half;
+                Key k = KEY(current, SIZE(current)); //Se obtiene la key que sube
+                current = parent[--level]; //Se atiende al padre
+                int i = SIZE(current) - 1;
+                SIZE(current) += 1;
+                while(i>= 0 && key < KEY(current, i)){
+                    KEY(current, i + 1) = KEY(current, i);
+                    CHILD(current, i + 2) = CHILD(current, i+1);
+                    i -= 1;
+                }
+                KEY(current, i + 1) = k;
+                CHILD(current, i + 2) = other_half; //Se inserta la key y el hijo
+
+                if(SIZE(current) <= capacity) break; //Si no hay overflow, termina
+
+                SIZE(current) = mid;
+                other_half = NEW_NODE;
+                SIZE(other_half) = degree - mid - 1;
+                memcpy(&(KEY(other_half,0)), &(KEY(current,mid+1)), sizeof(Key)*(degree - mid - 1));
+                memcpy(&(CHILD(other_half,0)), &(CHILD(current,mid+1)), sizeof(Index)*(degree - mid));
+                    //Se hace split y el centro sube, pero no se queda en el nodo hijo 
+            }while(true);
+        }
+    }
+
+
+    void insert_t(std::vector<Key> const& keys, int from, int to, Index& current){
+        if(IS_NOT_LEAF(current) && ((to - from) > 1)){
+            int ndivisions = 0;
+            int divisions[degree + 1];
+            divisions[0] = from;
+            int biggest_division = 0;
+            int biggest_division_sz = 0;
+            for(int i = from; i<to;){
+                auto& _input_key = keys[i];
+                auto& _node_key = KEY(current, ndivisions);
+                if(keys[i] < KEY(current, ndivisions)) ++i;
+                else {
+                    const int division_sz = i - divisions[ndivisions];
+                    if(division_sz > biggest_division_sz){
+                        biggest_division = ndivisions;
+                        biggest_division_sz = division_sz;
+                    }
+                    divisions[++ndivisions] = i;
+                    if(ndivisions == SIZE(current)) break;
+                }
+            }
+            const int division_sz = to - divisions[ndivisions];
+            if(division_sz > biggest_division_sz){
+                biggest_division = ndivisions;
+                biggest_division_sz = division_sz;
+            }
+            divisions[++ndivisions] = to;
+
+            const unsigned initial_workers = free_workers;
+            if(free_workers <= ndivisions){
+                int i = 0;
+                while(i<ndivisions){
+                    std::vector<std::thread> threads;
+                    while(free_workers && i < ndivisions){
+                        const int child_from = divisions[i];
+                        const int child_to = divisions[i+1];
+                        if(child_from < child_to){
+                            threads.emplace_back([this, &keys, child_from, child_to, current, i]{
+                                this->insert_r(keys, child_from, child_to, this->CHILD(current, i));
+                            });
+                            --free_workers;
+                        }
+                        ++i;
+                    }
+                    for(auto& t : threads) t.join();
+                    free_workers = initial_workers;
+                }
+            }else{
+                std::vector<std::thread> threads;
+                int i = 0;
+                free_workers -= ndivisions;
+                for(; i<biggest_division; ++i){
+                    const int child_from = divisions[i];
+                    const int child_to = divisions[i+1];
+                    if(child_from < child_to){
+                        threads.emplace_back([this, &keys, child_from, child_to, current, i]{
+                            this->insert_r(keys, child_from, child_to, this->CHILD(current, i));
+                        });
+                    }
+                }
+                for(++i; i<ndivisions; ++i){
+                    const int child_from = divisions[i];
+                    const int child_to = divisions[i+1];
+                    if(child_from < child_to){
+                        threads.emplace_back([this, &keys, child_from, child_to, current, i]{
+                                this->insert_r(keys, child_from, child_to, this->CHILD(current, i));
+                        });
+                    }
+                }
+                const int child_from = divisions[biggest_division];
+                const int child_to = divisions[biggest_division+1];
+                threads.emplace_back([this, &keys, child_from, child_to, current, biggest_division]{
+                    this->insert_t(keys, child_from, child_to, this->CHILD(current, biggest_division));
+                });
+                for(auto& t : threads) t.join();
+            }
+        }
+        else{
+            insert_r(keys, from, to, current);
+        }
+    }
+
+
+    /* PARALLEL INSERT */
+    void insertMultiple(std::vector<Key> const& keys){
+        free_workers = workers;
+        if(workers <= 1 || root == null) {
+            insert_r(keys, 0, keys.size(), root);
+        }
+        else {
+            insert_t(keys, 0, keys.size(), root);
+        }
+    }
+
+
 };
 
+/* INVALID DEGREES (EMPTY CLASSES) */
 template<>
 class BPTree<0>{};
 template<>
