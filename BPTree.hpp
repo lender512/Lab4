@@ -10,74 +10,75 @@
 #include <mutex>
 
 //Macros para facilitar el uso de un vector como gestor de memoria
-#define SIZE(i) mem[i].size
-#define KEY(i,j) mem[i].key[j]
-#define CHILD(i,j) mem[i].child[j]
-#define PARENT(i) mem[i].parent
-#define IS_LEAF(i) (mem[i].child[0] == null)
-#define IS_NOT_LEAF(i) (mem[i].child[0] != null)
-#define NEXT(i) mem[i].child[degree]
-#define NEW_NODE mem.size(); mem.emplace_back()
+#define SIZE(i) (i->size)
+#define KEY(i,j) (i->key[j])
+#define CHILD(i,j) (i->child[j])
+#define PARENT(i) (i->parent)
+#define IS_LEAF(i) (i->child[0] == null)
+#define IS_NOT_LEAF(i) (i->child[0] != null)
+#define NEXT(i) (i->child[degree])
 #define CAN_GIVE(i) (SIZE(i) > min)
 
 template<uint32_t degree>
 class BPTree{
     using Key = uint32_t;
     using Value = uint32_t; // No se usa, pero en la practica deberia haber un value
-    using Index = uint32_t;  // Sustituto de ptr, es el indice del vector
     using Size = uint32_t;
-
-    static constexpr Index null = 0; //La posición 0 en el vector es dummy para permitir null = 0
     static constexpr Size capacity = degree-1;
     static constexpr Size mid = degree/2;
     static constexpr Size min = (degree/2) + (degree%2) - 1;
     static constexpr Size max_lvl = 20;
     static constexpr Size max_unbalance = 4;
-    
+
     struct Node{
         Size size;
         Key key[capacity+1];
-        Index child[degree+1] = {0};
+        Node* child[degree+1] = {0};
         uint32_t dummy[1]; //Mejora la performance con estos extras bytes
     };
+    using Pointer = Node*;  // Sustituto de ptr, es el indice del vector
+    static constexpr Pointer null = 0; //La posición 0 en el vector es dummy para permitir null = 0
+    
 
     
-    Index root; 
-    std::vector<Node> mem; //Toda la memoria dinámica que se usara
-    std::mutex mem_mtx;
+    Pointer root;
     unsigned unbalance;
 
     const unsigned workers;
     unsigned free_workers;
 
-    void eraseInternal(Index internal, int i){
-        Index current = CHILD(internal, i + 1);
+    void eraseInternal(Pointer internal, int i){
+        Pointer current = CHILD(internal, i + 1);
         while(IS_NOT_LEAF(current)){
             current = CHILD(current, 0);
         }
         KEY(internal, i) = KEY(current, 0);
     }
 
-    public:
-    BPTree(unsigned nodes_reservation, unsigned workers = 0): workers{workers}, unbalance{0}{
-        root = null;
-        mem.reserve(nodes_reservation); //Evitar allocaciones
-        mem.emplace_back();
+    void deleteAll(Pointer current){
+        if(current == null) return;
+        for(int i = 0; i<SIZE(current); ++i) deleteAll(CHILD(current, i));
+        delete current;
     }
 
-    ~BPTree(){}
+    public:
+    BPTree(unsigned workers = 0): workers{workers}, unbalance{0}, root{null}{}
+
+    ~BPTree(){
+        deleteAll(root);
+    }
 
     void insert(Key const& key){
         if(root == null){ 
-            root = NEW_NODE;
+            root = new Node;
             SIZE(root) = 1;
             KEY(root, 0) = key;
             return;
         } //Si no hay root
         
         int level = 0; //Head del stack
-        Index parent[max_lvl]; //Stack de parents
-        Index current = root;
+        Pointer parent[max_lvl]; //Stack de parents
+        Pointer current = root;
         while(IS_NOT_LEAF(current)){
             parent[level++] = current;
             int i = 0;
@@ -99,7 +100,7 @@ class BPTree{
         if(SIZE(current) <= capacity) return; //Si no hay overflow, termina
 
         SIZE(current) = mid;
-        Index other_half = NEW_NODE;
+        Pointer other_half = new Node;
         SIZE(other_half) = degree - mid;
         memcpy(&(KEY(other_half,0)), &(KEY(current,mid)), sizeof(Key)*(degree - mid));
         NEXT(other_half) = NEXT(current);
@@ -109,7 +110,7 @@ class BPTree{
 
         do{
             if(current == root){
-                root = NEW_NODE;
+                root = new Node;
                 
                 SIZE(root) = 1;
                 KEY(root, 0) = KEY(current, SIZE(current));
@@ -119,7 +120,7 @@ class BPTree{
                 return;
             } //Si es el root, se crear otro root y termina
         
-            Index child = other_half;
+            Pointer child = other_half;
             Key k = KEY(current, SIZE(current)); //Se obtiene la key que sube
             current = parent[--level]; //Se atiende al padre
             int i = SIZE(current) - 1;
@@ -135,10 +136,10 @@ class BPTree{
             if(SIZE(current) <= capacity) return; //Si no hay overflow, termina
 
             SIZE(current) = mid;
-            other_half = NEW_NODE;
+            other_half = new Node;
             SIZE(other_half) = degree - mid - 1;
             memcpy(&(KEY(other_half,0)), &(KEY(current,mid+1)), sizeof(Key)*(degree - mid - 1));
-            memcpy(&(CHILD(other_half,0)), &(CHILD(current,mid+1)), sizeof(Index)*(degree - mid));
+            memcpy(&(CHILD(other_half,0)), &(CHILD(current,mid+1)), sizeof(Pointer)*(degree - mid));
                 //Se hace split y el centro sube, pero no se queda en el nodo hijo 
         }while(true);
     }
@@ -146,10 +147,10 @@ class BPTree{
     std::vector<int> bfs(){
         std::vector<int> result;
         if(root == null) return result;
-        std::queue<Index> q;
+        std::queue<Pointer> q;
         q.push(root);
         while(!q.empty()){
-            const Index current = q.front();
+            const Pointer current = q.front();
             if(CHILD(current, 0) != null)
             for(int i = 0; i<(SIZE(current)+1); ++i){
                 if(CHILD(current, i) != null) q.push(CHILD(current, i));
@@ -164,11 +165,11 @@ class BPTree{
 
     void print(){
         if(root == null) return;
-        std::queue<Index> q;
+        std::queue<Pointer> q;
         q.push(root);
         Key prev = UINT32_MAX;
         while(!q.empty()){
-            const Index current = q.front();
+            const Pointer current = q.front();
             if(CHILD(current, 0) != null)
             for(int i = 0; i<(SIZE(current)+1); ++i){
                 if(CHILD(current, i) != null) q.push(CHILD(current, i));
@@ -186,8 +187,6 @@ class BPTree{
         std::cout << std::endl;
     }
 
-    int nodes(){return mem.size();}
-
 
     void erase(Key const& key){
         if(root == null) return; //Si no hay root, termina
@@ -196,9 +195,9 @@ class BPTree{
         int i;
         int level = 0; //Head del stack
         int child[max_lvl]; //Stack de childs
-        Index parent[max_lvl]; //Stack de parents
-        Index current = root;
-        Index internal = null;
+        Pointer parent[max_lvl]; //Stack de parents
+        Pointer current = root;
+        Pointer internal = null;
         int iinternal;
         while(IS_NOT_LEAF(current)){
             for(i = 0; i< SIZE(current); ++i){
@@ -233,7 +232,10 @@ class BPTree{
         
 
         if(current == root){
-            if(SIZE(root) == 0) root = null; //Si el root está vacio, volver null
+            if(SIZE(root) == 0) {
+                delete root;
+                root = null;
+            } //Si el root está vacio, volver null
             return;
         } //Si solo esta el root, termina
 
@@ -246,7 +248,7 @@ class BPTree{
         } // Si no hay underflow, termina 
 
 
-        Index sibling;
+        Pointer sibling;
         if(ileft >= 0){
             sibling = CHILD(parent[level], ileft);
             if(CAN_GIVE(sibling)){
@@ -274,7 +276,7 @@ class BPTree{
             }
         } //Si algun hermano puede prestar, presta, arregla al padre y termina
 
-        Index deleted;
+        Pointer deleted;
         if(ileft >= 0){
             sibling = CHILD(parent[level], ileft);
             for(int j = 0; j < SIZE(current); ++j){
@@ -284,6 +286,7 @@ class BPTree{
             NEXT(sibling) = NEXT(current);
             deleted = current;
             i = ileft;
+            delete current;
         }
         else if(iright <= SIZE(parent[level])){
             sibling = CHILD(parent[level], iright);
@@ -294,7 +297,7 @@ class BPTree{
             NEXT(current) = NEXT(sibling);
             deleted = sibling;
             i = iright - 1;
-
+            delete sibling;
         } //Si existe algun hermano y ninguno puede prestar, se juntan
 
         do{
@@ -377,6 +380,7 @@ class BPTree{
                 SIZE(sibling) += SIZE(current) + 1;
                 deleted = current;
                 i = ileft;
+                delete current;
             }
             else if(iright <= SIZE(parent[level])){
                 sibling = CHILD(parent[level], iright);
@@ -390,7 +394,7 @@ class BPTree{
                 SIZE(current) += SIZE(sibling) + 1;
                 deleted = sibling;
                 i = iright - 1;
-
+                delete sibling;
             } //Si existe algun hermano y ninguno puede prestar, se juntan
 
         }while(true);
@@ -415,8 +419,7 @@ class BPTree{
     }
 
     /* PARALLEL (FOR MULTIPLE LOOKUPS) */
-    void contains_r(std::vector<Key>& keys, std::vector<int>& result, int from, int to, Index current){
-        auto& _node = mem[current];
+    void contains_r(std::vector<Key>& keys, std::vector<int>& result, int from, int to, Pointer current){
         if(IS_NOT_LEAF(current)){
             if((to - from) > 1){
                 int ndivisions = 0;
@@ -438,7 +441,7 @@ class BPTree{
                     const int child_from = divisions[i];
                     const int child_to = divisions[i+1];
                     if(child_from < child_to){
-                        const Index child = CHILD(current, i);
+                        const Pointer child = CHILD(current, i);
                         contains_r(keys, result, child_from, child_to, child);
                     }
                 }
@@ -471,8 +474,7 @@ class BPTree{
         }
     }
 
-    void contains_t(std::vector<Key>& keys, std::vector<int>& result, int from, int to, Index current){
-        auto& _node = mem[current];
+    void contains_t(std::vector<Key>& keys, std::vector<int>& result, int from, int to, Pointer current){
         if(IS_NOT_LEAF(current)){
             if((to - from) > 1){
                 int ndivisions = 0;
@@ -510,7 +512,7 @@ class BPTree{
                         while(free_workers && i < ndivisions){
                             const int child_from = divisions[i];
                             const int child_to = divisions[i+1];
-                            const Index child = CHILD(current, i);
+                            const Pointer child = CHILD(current, i);
                             if(child_from < child_to){
                                 threads.emplace_back([this, &keys, &result, child_from, child_to, child]{
                                     this->contains_r(keys, result, child_from, child_to, child);
@@ -529,7 +531,7 @@ class BPTree{
                     for(; i<biggest_division; ++i){
                         const int child_from = divisions[i];
                         const int child_to = divisions[i+1];
-                        const Index child = CHILD(current, i);
+                        const Pointer child = CHILD(current, i);
                         if(child_from < child_to){
                             threads.emplace_back([this, &keys, &result, child_from, child_to, child]{
                                 this->contains_r(keys, result, child_from, child_to, child);
@@ -539,7 +541,7 @@ class BPTree{
                     for(++i; i<ndivisions; ++i){
                         const int child_from = divisions[i];
                         const int child_to = divisions[i+1];
-                        const Index child = CHILD(current, i);
+                        const Pointer child = CHILD(current, i);
                         if(child_from < child_to){
                             threads.emplace_back([this, &keys, &result, child_from, child_to, child]{
                                 this->contains_r(keys, result, child_from, child_to, child);
@@ -548,7 +550,7 @@ class BPTree{
                     }
                     const int child_from = divisions[biggest_division];
                     const int child_to = divisions[biggest_division+1];
-                    const Index child = CHILD(current, biggest_division);
+                    const Pointer child = CHILD(current, biggest_division);
                     threads.emplace_back([this, &keys, &result, child_from, child_to, child]{
                         this->contains_t(keys, result, child_from, child_to, child);
                     });
@@ -600,7 +602,7 @@ class BPTree{
     bool contains(Key const& key) {
         if(root == null) return false; //Si no hay root, termina
         
-        Index current = root;
+        Pointer current = root;
         while(IS_NOT_LEAF(current)){
             int i = 0;
             for(; i< SIZE(current); ++i){
@@ -620,27 +622,21 @@ class BPTree{
     }
 
 
-    void insert_r(std::vector<Key> const& keys, int from, int to, Index& sub_root){
+    void insert_r(std::vector<Key> const& keys, int from, int to, Pointer& sub_root){
         for(int _i = from; _i<to; ++_i){
             int size;
             const Key key = keys[_i];
             if(sub_root == null){ 
-                sub_root = NEW_NODE;
+                sub_root = new Node;
                 SIZE(sub_root) = 1;
                 KEY(sub_root, 0) = key;
                 continue;
             } //Si no hay root
             
             int level = 0; //Head del stack
-            Index parent[max_lvl]; //Stack de parents
-            Index current = sub_root;
+            Pointer parent[max_lvl]; //Stack de parents
+            Pointer current = sub_root;
             while(IS_NOT_LEAF(current)){
-                if(level >= max_lvl){
-                    for(int i = 0; i<level; ++i){
-                        const auto& _node = mem[parent[i]];
-                        int gaaa = 1;
-                    }
-                }
                 parent[level++] = current;
                 int i = 0;
                 for(; i< SIZE(current); ++i){
@@ -648,7 +644,6 @@ class BPTree{
                 }
                 current = CHILD(current, i);
             } //Encontrar nodo hoja y el camino de parents
-
             int i = SIZE(current) - 1;
             SIZE(current) += 1;
             while(i>= 0 && key < KEY(current, i)){
@@ -661,11 +656,8 @@ class BPTree{
             if(SIZE(current) <= capacity) continue; //Si no hay overflow, termina
 
             SIZE(current) = mid;
-            Index other_half;
-            {
-                std::lock_guard<std::mutex> lock(mem_mtx);
-                other_half = NEW_NODE;
-            }
+            Pointer other_half;
+            other_half = new Node;
             SIZE(other_half) = degree - mid;
             memcpy(&(KEY(other_half,0)), &(KEY(current,mid)), sizeof(Key)*(degree - mid));
             NEXT(other_half) = NEXT(current);
@@ -674,13 +666,9 @@ class BPTree{
                         //Se actualiza la double linked list
 
             do{
+                
                 if(current == sub_root){
-                    {
-                        std::lock_guard<std::mutex> lock(mem_mtx);
-                        sub_root = NEW_NODE;
-                        size = mem.size();
-                    }
-                    
+                    sub_root = new Node;
                     SIZE(sub_root) = 1;
                     KEY(sub_root, 0) = KEY(current, SIZE(current));
                     CHILD(sub_root, 0) = current;
@@ -688,7 +676,7 @@ class BPTree{
                     break;
                 } //Si es el root, se crear otro root y termina
             
-                Index child = other_half;
+                Pointer child = other_half;
                 Key k = KEY(current, SIZE(current)); //Se obtiene la key que sube
                 current = parent[--level]; //Se atiende al padre
                 int i = SIZE(current) - 1;
@@ -704,21 +692,17 @@ class BPTree{
                 if(SIZE(current) <= capacity) break; //Si no hay overflow, termina
 
                 SIZE(current) = mid;
-                {
-                    std::lock_guard<std::mutex> lock(mem_mtx);
-                    other_half = NEW_NODE;
-                    size = mem.size();
-                }
+                other_half = new Node;
                 SIZE(other_half) = degree - mid - 1;
                 memcpy(&(KEY(other_half,0)), &(KEY(current,mid+1)), sizeof(Key)*(degree - mid - 1));
-                memcpy(&(CHILD(other_half,0)), &(CHILD(current,mid+1)), sizeof(Index)*(degree - mid));
+                memcpy(&(CHILD(other_half,0)), &(CHILD(current,mid+1)), sizeof(Pointer)*(degree - mid));
                     //Se hace split y el centro sube, pero no se queda en el nodo hijo 
             }while(true);
         }
     }
 
 
-    void insert_t(std::vector<Key> const& keys, int from, int to, Index& current){
+    void insert_t(std::vector<Key> const& keys, int from, int to, Pointer& current){
         if(IS_NOT_LEAF(current) && ((to - from) > 1)){
             int ndivisions = 0;
             int divisions[degree + 1];
@@ -747,8 +731,7 @@ class BPTree{
             divisions[++ndivisions] = to;
 
             const unsigned initial_workers = free_workers;
-            //if(free_workers <= ndivisions)
-            if(true){
+            if(free_workers <= ndivisions){
                 int i = 0;
                 while(i<ndivisions){
                     std::vector<std::thread> threads;
@@ -757,7 +740,7 @@ class BPTree{
                         const int child_to = divisions[i+1];
                         if(child_from < child_to){
                             threads.emplace_back([this, &keys, child_from, child_to, current, i]{
-                                this->insert_r(keys, child_from, child_to, this->CHILD(current, i));
+                                this->insert_r(keys, child_from, child_to, CHILD(current, i));
                             });
                             --free_workers;
                         }
@@ -775,7 +758,7 @@ class BPTree{
                     const int child_to = divisions[i+1];
                     if(child_from < child_to){
                         threads.emplace_back([this, &keys, child_from, child_to, current, i]{
-                            this->insert_r(keys, child_from, child_to, this->CHILD(current, i));
+                            this->insert_r(keys, child_from, child_to, CHILD(current, i));
                         });
                     }
                 }
@@ -784,14 +767,14 @@ class BPTree{
                     const int child_to = divisions[i+1];
                     if(child_from < child_to){
                         threads.emplace_back([this, &keys, child_from, child_to, current, i]{
-                                this->insert_r(keys, child_from, child_to, this->CHILD(current, i));
+                                this->insert_r(keys, child_from, child_to, CHILD(current, i));
                         });
                     }
                 }
                 const int child_from = divisions[biggest_division];
                 const int child_to = divisions[biggest_division+1];
                 threads.emplace_back([this, &keys, child_from, child_to, current, biggest_division]{
-                    this->insert_t(keys, child_from, child_to, this->CHILD(current, biggest_division));
+                    this->insert_t(keys, child_from, child_to, CHILD(current, biggest_division));
                 });
                 for(auto& t : threads) t.join();
             }
@@ -805,7 +788,7 @@ class BPTree{
     /* PARALLEL INSERT */
     void insertMultiple(std::vector<Key> const& keys){
         free_workers = workers;
-        if(workers < 1 || root == null) {
+        if(workers <= 1 || root == null) {
             insert_r(keys, 0, keys.size(), root);
         }
         else {
