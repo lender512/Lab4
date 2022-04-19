@@ -166,16 +166,21 @@ class BPTree{
         if(root == null) return;
         std::queue<Index> q;
         q.push(root);
+        Key prev = UINT32_MAX;
         while(!q.empty()){
             const Index current = q.front();
             if(CHILD(current, 0) != null)
             for(int i = 0; i<(SIZE(current)+1); ++i){
                 if(CHILD(current, i) != null) q.push(CHILD(current, i));
             }
+            if(prev > KEY(current, 0)) std::cout << std::endl; else std::cout << "  ";
+            std::cout << "[ ";
             for(int i = 0; i<SIZE(current); ++i){
                 std::cout << KEY(current, i) << ' ';
             }
-            std::cout << std::endl;
+            std::cout << ']';
+            //std::cout << std::endl;
+            prev = KEY(current, SIZE(current) - 1);
             q.pop();
         }
         std::cout << std::endl;
@@ -617,6 +622,7 @@ class BPTree{
 
     void insert_r(std::vector<Key> const& keys, int from, int to, Index& sub_root){
         for(int _i = from; _i<to; ++_i){
+            int size;
             const Key key = keys[_i];
             if(sub_root == null){ 
                 sub_root = NEW_NODE;
@@ -629,6 +635,12 @@ class BPTree{
             Index parent[max_lvl]; //Stack de parents
             Index current = sub_root;
             while(IS_NOT_LEAF(current)){
+                if(level >= max_lvl){
+                    for(int i = 0; i<level; ++i){
+                        const auto& _node = mem[parent[i]];
+                        int gaaa = 1;
+                    }
+                }
                 parent[level++] = current;
                 int i = 0;
                 for(; i< SIZE(current); ++i){
@@ -649,7 +661,11 @@ class BPTree{
             if(SIZE(current) <= capacity) continue; //Si no hay overflow, termina
 
             SIZE(current) = mid;
-            Index other_half = NEW_NODE;
+            Index other_half;
+            {
+                std::lock_guard<std::mutex> lock(mem_mtx);
+                other_half = NEW_NODE;
+            }
             SIZE(other_half) = degree - mid;
             memcpy(&(KEY(other_half,0)), &(KEY(current,mid)), sizeof(Key)*(degree - mid));
             NEXT(other_half) = NEXT(current);
@@ -662,6 +678,7 @@ class BPTree{
                     {
                         std::lock_guard<std::mutex> lock(mem_mtx);
                         sub_root = NEW_NODE;
+                        size = mem.size();
                     }
                     
                     SIZE(sub_root) = 1;
@@ -687,7 +704,11 @@ class BPTree{
                 if(SIZE(current) <= capacity) break; //Si no hay overflow, termina
 
                 SIZE(current) = mid;
-                other_half = NEW_NODE;
+                {
+                    std::lock_guard<std::mutex> lock(mem_mtx);
+                    other_half = NEW_NODE;
+                    size = mem.size();
+                }
                 SIZE(other_half) = degree - mid - 1;
                 memcpy(&(KEY(other_half,0)), &(KEY(current,mid+1)), sizeof(Key)*(degree - mid - 1));
                 memcpy(&(CHILD(other_half,0)), &(CHILD(current,mid+1)), sizeof(Index)*(degree - mid));
@@ -726,7 +747,8 @@ class BPTree{
             divisions[++ndivisions] = to;
 
             const unsigned initial_workers = free_workers;
-            if(free_workers <= ndivisions){
+            //if(free_workers <= ndivisions)
+            if(true){
                 int i = 0;
                 while(i<ndivisions){
                     std::vector<std::thread> threads;
@@ -783,7 +805,7 @@ class BPTree{
     /* PARALLEL INSERT */
     void insertMultiple(std::vector<Key> const& keys){
         free_workers = workers;
-        if(workers <= 1 || root == null) {
+        if(workers < 1 || root == null) {
             insert_r(keys, 0, keys.size(), root);
         }
         else {
