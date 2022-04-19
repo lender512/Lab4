@@ -19,39 +19,70 @@ int64_t measure(int n, std::function<void(void)> f){
 
 int main() { /* SPANGLICHHHH GAAAAA */
 
-    /* AMOUNT (REDUCE TO TEST FASTER) */
+    /* AMOUNT (REDUCE TO TEST FASTER) 135799*/
     #define N 1000000
 
-    /* READ */    
-    std::ifstream texto;
-    texto.open("./output.txt");
-    std::vector<uint32_t> datos(N);
-    if (texto.is_open()) all texto >> datos[i];
+
+    /* LOAD DATA */
+    std::vector<uint32_t> datos1(N);
+    std::vector<uint32_t> datos2(N);
+    {
+        std::ifstream texto;
+        texto.open("./output.txt");
+        if (texto.is_open()) all {texto >> datos1[i]; datos1[i]*=2;}
+        all datos2[i] = datos1[i] + 1;
+        texto.close();
+    }
 
 
-    /* INSERT (NOT PARALLEL) */
-    BPTree<3> tree1(1024*128);
-    BPTree<3> tree(1024*128, 4);
-    all tree.insert( datos[i] );
-    all tree1.insert( datos[i] );
-    std::sort(datos.begin(), datos.end());
+    /* TEST PARALLEL LOOKUP + PARALLEL INSERT */
+    {
+        BPTree<3> tree(4);
+        tree.insertMultiple(datos1); // No paralelo pues esta vacio el arbol
+        tree.insertMultiple(datos2); // Paralelo pues ya tiene por lo menos dos niveles
+        auto result = tree.containsMultiple(datos1); for(auto b : result) if(!b) exit(-1);
+        result = tree.containsMultiple(datos2); for(auto b : result) if(!b) exit(-1);
+        printf("\nTEST PASSED!\n");
+    }
 
 
-    /* PARALLEL LOOKUP TEST:  ALL ONES, WORKS CORRECTLY*/
-    // auto result = tree.containsMultiple(datos);
-    // for(auto b : result) std::cout << b << '\n';
-    // std::cout << "GaaaaGAAA" << std::flush;
+    /* MEASURE LOOKUP*/
+    {
+        BPTree<3> treeNP; // Not parallel
+        BPTree<3> treeP(4); // Parallel
+        auto not_parallel = measure(10,[&treeNP, &datos1]{auto r = treeNP.containsMultiple(datos1);});
+        auto parallel = measure(10,[&treeP, &datos1]{auto r = treeP.containsMultiple(datos1);});
+        auto diff = not_parallel - parallel;
+
+        printf("\nLOOKUP\n");
+        printf("Not parallel: \t %ld\n", not_parallel);
+        printf("Parallel: \t %ld\n", parallel);
+        printf("%%Reduction: \t %ld%%\n", (diff*100)/not_parallel);
+    }
 
 
-    /* NOT PARALLEL VS PARALLEL TIMES */
-    auto not_parallel = measure(10,[&tree1, &datos]{auto result = tree1.containsMultiple(datos);});
-    auto parallel = measure(10,[&tree, &datos]{auto result = tree.containsMultiple(datos);});
-    auto diff = not_parallel - parallel;
+    /* MEASURE INSERT*/
+    {
+        int64_t not_parallel = 0, parallel = 0;
+        for(int _i = 0; _i = 10; ++_i){
+            BPTree<3> treeNP; // Not parallel
+            BPTree<3> treeP(4); // Parallel
+            treeNP.insertMultiple(datos1); // No paralelo pues esta vacio el arbol
+            treeP.insertMultiple(datos1);
+             
+            not_parallel += measure(1,[&treeNP, &datos2]{treeNP.insertMultiple(datos2);});
+            parallel += measure(1,[&treeP, &datos2]{treeP.insertMultiple(datos2);});
+               
+        }
+        auto diff = not_parallel - parallel;
+        printf("\nINSERT\n");
+        printf("Not parallel: \t %ld\n", not_parallel);
+        printf("Parallel: \t %ld\n", parallel);
+        printf("%%Reduction: \t %ld%%\n", (diff*100)/not_parallel);
+    }
 
-    printf("Not parallel: \t %ld\n", not_parallel);
-    printf("Parallel: \t %ld\n", parallel);
-    printf("%%Reduction: \t %ld%%\n", (diff*100)/not_parallel);
     
-    exit(0);
+    
+    return 0;
 }
 
