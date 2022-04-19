@@ -27,7 +27,7 @@ class BPTree{
     static constexpr Size capacity = degree-1;
     static constexpr Size mid = degree/2;
     static constexpr Size min = (degree/2) + (degree%2) - 1;
-    static constexpr Size max_lvl = 20;
+    static constexpr Size max_lvl = 22;
     static constexpr Size max_unbalance = 4;
 
     struct Node{
@@ -36,8 +36,8 @@ class BPTree{
         Node* child[degree+1] = {0};
         uint32_t dummy[1]; //Mejora la performance con estos extras bytes
     };
-    using Pointer = Node*;  // Sustituto de ptr, es el indice del vector
-    static constexpr Pointer null = 0; //La posición 0 en el vector es dummy para permitir null = 0
+    using Pointer = Node*;
+    static constexpr Pointer null = 0;
     
 
     
