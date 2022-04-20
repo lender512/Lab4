@@ -27,6 +27,7 @@ class Set4Batches{
         bool exists;
     };
 
+    private:
     using Size = uint32_t;
     static constexpr Size capacity = degree-1;
     static constexpr Size mid = degree/2;
@@ -42,6 +43,11 @@ class Set4Batches{
     };
     using Pointer = Node*;
     static constexpr Pointer null = 0;
+
+    struct Job{
+        int subset;
+        std::function<void(void)> f;
+    };
 
     Pointer root;
     unsigned size;
@@ -133,7 +139,7 @@ class Set4Batches{
 
 
     void insert_t(std::vector<Key> const& keys, Pointer& current){
-        if(IS_NOT_LEAF(current) && keys.size() > free_workers){  
+        if(IS_NOT_LEAF(current) && keys.size() > 1){  
             std::vector<std::vector<Key>> subset(SIZE(current) + 1);
             const int reservation = 2*(keys.size())/(SIZE(current) + 1);
             for(auto& s : subset) s.reserve(reservation);
@@ -160,7 +166,7 @@ class Set4Batches{
             std::vector<std::thread> threads;
             const int equality = keys.size() / free_workers;
             while(free_workers && free_workers <= jobs.size()){
-                int acc = 0;
+                int acc = -1;
                 std::vector<std::function<void(void)>> worker_jobs;
                 while(acc < equality && free_workers <= jobs.size()){
                     auto const& job = jobs.back();
@@ -190,31 +196,36 @@ class Set4Batches{
         }
     }
 
-    void contains_r(std::vector<Key> const& keys, std::vector<KeyExistance>& result, int from, Pointer sub_root){
+    void contains_r(std::vector<Key> const& keys, std::vector<KeyExistence>& result, int from, Pointer sub_root){
         for(int i = 0; i<keys.size(); ++i) result[from + i] = {keys[i], false};
         for(int i = 0; i<keys.size(); ++i){
             Key const& key = keys[i];
-            Pointer current = root;
+            Pointer current = sub_root;
             while(IS_NOT_LEAF(current)){
-                int i = 0;
-                for(; i< SIZE(current); ++i){
-                    if(key < KEY(current, i)) break;
+                int j = 0;
+                for(; j< SIZE(current); ++j){
+                    if(key < KEY(current, j)) break;
                 }
-                current = CHILD(current, i);
+                current = CHILD(current, j);
                 
             } //Encontrar nodo hoja
 
-            for(int i = 0; i< SIZE(current); ++i){
-                if(key == KEY(current, i) && KEY_NOT_DIRTY(current, i)){
+            for(int j = 0; j< SIZE(current); ++j){
+                if(key == KEY(current, j) && KEY_NOT_DIRTY(current, j)){
                     result[from + i].exists = true;
                     break;
                 }
             } //Encontrar key en nodo hoja
+
         }
     }
 
-    void contains_t(std::vector<Key> const& keys, std::vector<KeyExistance>& result, int from, Pointer current){
+    void contains_t(std::vector<Key> const& keys, std::vector<KeyExistence>& result, int from, Pointer current){
+        if(IS_NOT_LEAF(current) && keys.size() > 1){
 
+        }else{
+            contains_r(keys, result, from, current);
+        }
     }
 
     public:
@@ -235,12 +246,14 @@ class Set4Batches{
 
     std::vector<KeyExistence> contains(std::vector<Key> const& keys){
         std::vector<KeyExistence> result(keys.size());
-        if(workers <= 1 || root == null) {
+        if(root != null)
+        if(workers <= 1) {
             contains_r(keys, result, 0, root);
         }
         else {
             free_workers = workers;
-            contains_t(keys, result, 0, root);
+            contains_r(keys, result, 0, root);
+            //contains_t(keys, result, 0, root);
         }
         return result;
     }
