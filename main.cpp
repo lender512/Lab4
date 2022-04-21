@@ -1,7 +1,6 @@
 #include <fstream>
 #include <chrono>
-#include <functional>
-#include "BPTree.hpp"
+#include "Set4Batches.hpp"
 
 
 int64_t measure(int n, std::function<void(void)> f){
@@ -26,35 +25,39 @@ int main() { /* SPANGLICHHHH GAAAAA */
     /* LOAD DATA AND SORT*/
     std::vector<uint32_t> datos1(N);
     std::vector<uint32_t> datos2(N);
+    std::vector<uint32_t> sdatos1(N);
+    std::vector<uint32_t> sdatos2(N);
     {
         std::ifstream texto;
         texto.open("./output.txt");
         if (texto.is_open()) all {texto >> datos1[i]; datos1[i]*=2;}
-        std::sort(datos1.begin(), datos1.end());
         all datos2[i] = datos1[i] + 1;
+        all sdatos1[i] = datos1[i];
+        all sdatos2[i] = datos2[i];
+        std::sort(sdatos1.begin(), sdatos1.end());
+        std::sort(sdatos2.begin(), sdatos2.end());
     }
-
-
+    
     /* TEST PARALLEL LOOKUP + PARALLEL INSERT */
     {
-        BPTree<3> tree;
-        for(auto& e : datos1) tree.insert(e); // No paralelo pues esta vacio el arbol
-        tree.insertMultiple(datos2); // Paralelo pues ya tiene por lo menos dos niveles
-        const auto result1 = tree.containsMultiple(datos1); for(auto b : result1) if(b == 0) exit(b);
-        const auto result2 = tree.containsMultiple(datos2); for(auto b : result2) if(b == 0) exit(b);
+        Set4Batches<uint32_t, 32, 4> tree;
+        tree.insert(datos1);
+        tree.insert(datos2);
+        const auto result1 = tree.contains(datos1); for(auto const& r : result1) if(r.exists == false) exit(0);
+        const auto result2 = tree.contains(datos2); for(auto const& r : result2) if(r.exists == false) exit(0);
         printf("\nTEST PASSED!\n");
     }
 
 
     /* MEASURE LOOKUP*/
     {
-        BPTree<3> treeNP; // Not parallel
-        BPTree<3> treeP(4); // Parallel
-        treeNP.insertMultiple(datos1);
-        treeP.insertMultiple(datos1);
+        Set4Batches<uint32_t, 32, 1> treeNP; // Not parallel
+        Set4Batches<uint32_t, 32, 4> treeP; // Parallel
+        treeNP.insert(datos1);
+        treeP.insert(datos1);
 
-        auto not_parallel = measure(1,[&treeNP, &datos1]{auto r = treeNP.containsMultiple(datos1);});
-        auto parallel = measure(1,[&treeP, &datos1]{auto r = treeP.containsMultiple(datos1);});
+        auto not_parallel = measure(1,[&treeNP, &datos1]{auto r = treeNP.contains(datos1);});
+        auto parallel = measure(1,[&treeP, &datos1]{auto r = treeP.contains(datos1);});
         auto diff = not_parallel - parallel;
 
         printf("\nLOOKUP\n");
@@ -66,16 +69,16 @@ int main() { /* SPANGLICHHHH GAAAAA */
 
     /* MEASURE INSERT*/
     {
-        BPTree<3> treeNP; // Not parallel
-        BPTree<3> treeP(4); // Parallel
-        treeNP.insertMultiple(datos1);
-        treeP.insertMultiple(datos1);
+        Set4Batches<uint32_t, 32, 1> treeNP; // Not parallel
+        Set4Batches<uint32_t, 32, 4> treeP; // Parallel
+        treeNP.insert(datos1);
+        treeP.insert(datos1);
 
-        auto not_parallel = measure(1,[&treeNP, &datos2]{treeNP.insertMultiple(datos2);});
-        auto parallel = measure(1,[&treeP, &datos2]{treeP.insertMultiple(datos2);});
+        auto not_parallel = measure(1,[&treeNP, &datos2]{treeNP.insert(datos2);});
+        auto parallel = measure(1,[&treeP, &datos2]{treeP.insert(datos2);});
         auto diff = not_parallel - parallel;
 
-        printf("\nLOOKUP\n");
+        printf("\nINSERT\n");
         printf("Not parallel: \t %ld\n", not_parallel);
         printf("Parallel: \t %ld\n", parallel);
         printf("%%Reduction: \t %ld%%\n", (diff*100)/not_parallel);
