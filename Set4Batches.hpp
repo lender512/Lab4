@@ -165,20 +165,22 @@ class Set4Batches{
 
             
             std::vector<std::thread> threads;
-            const int equality = keys.size() / free_workers;
-            while(free_workers && free_workers <= jobs.size()){
-                int acc = -1;
-                std::vector<std::function<void(void)>> worker_jobs;
-                while(acc < equality && free_workers <= jobs.size()){
-                    auto const& job = jobs.back();
-                    worker_jobs.push_back(job.f);
-                    acc += subset[job.subset].size();
-                    jobs.pop_back();
+            if (free_workers < jobs.size()){
+                const int equality = keys.size() / free_workers;
+                while(free_workers && free_workers <= jobs.size()){
+                    int acc = -1;
+                    std::vector<std::function<void(void)>> worker_jobs;
+                    while(acc < equality && free_workers <= jobs.size()){
+                        auto const& job = jobs.back();
+                        worker_jobs.push_back(job.f);
+                        acc += subset[job.subset].size();
+                        jobs.pop_back();
+                    }
+                    threads.emplace_back([worker_jobs]{for(auto const& worker_job : worker_jobs) worker_job();});
+                    --free_workers;
                 }
-                threads.emplace_back([worker_jobs]{for(auto const& worker_job : worker_jobs) worker_job();});
-                --free_workers;
             }
-            if(jobs.size()) {
+            else if (free_workers > jobs.size()){
                 while(jobs.size() > 1){
                     const auto worker_job = jobs.back().f;
                     threads.emplace_back([worker_job]{worker_job();});
@@ -186,9 +188,17 @@ class Set4Batches{
                     --free_workers;
                 }
                 const int i = jobs.back().subset;
-               threads.emplace_back([this, &subset, current, i]{
+                threads.emplace_back([this, &subset, current, i]{
                     this->insert_t(subset[i], CHILD(current, i));
                 });
+            }
+            else{
+                while(jobs.size()){
+                    const auto worker_job = jobs.back().f;
+                    threads.emplace_back([worker_job]{worker_job();});
+                    jobs.pop_back();
+                    --free_workers;
+                }
             }
             for(auto& t : threads) t.join();
         }
@@ -249,20 +259,21 @@ class Set4Batches{
             std::sort(jobs.begin(), jobs.end(), [&subset](Job const& a, Job const& b){return subset[a.subset].size() > subset[b.subset].size();});
             
             std::vector<std::thread> threads;
-            const int equality = keys.size() / free_workers;
-            while(free_workers && free_workers <= jobs.size()){
-                int acc = -1;
-                std::vector<std::function<void(void)>> worker_jobs;
-                while(acc < equality && free_workers <= jobs.size()){
-                    auto const& job = jobs.back();
-                    worker_jobs.push_back(job.f);
-                    acc += subset[job.subset].size();
-                    jobs.pop_back();
+            if (free_workers < jobs.size()){
+                const int equality = keys.size() / free_workers;
+                while(free_workers && free_workers <= jobs.size()){
+                    int acc = -1;
+                    std::vector<std::function<void(void)>> worker_jobs;
+                    while(acc < equality && free_workers <= jobs.size()){
+                        auto const& job = jobs.back();
+                        worker_jobs.push_back(job.f);
+                        acc += subset[job.subset].size();
+                        jobs.pop_back();
+                    }
+                    threads.emplace_back([worker_jobs]{for(auto const& worker_job : worker_jobs) worker_job();});
+                    --free_workers;
                 }
-                threads.emplace_back([worker_jobs]{for(auto const& worker_job : worker_jobs) worker_job();});
-                --free_workers;
-            }
-            if(jobs.size()) {
+            }else if (free_workers > jobs.size()){
                 while(jobs.size() > 1){
                     const auto worker_job = jobs.back().f;
                     threads.emplace_back([worker_job]{worker_job();});
@@ -271,9 +282,16 @@ class Set4Batches{
                 }
                 const int i = jobs.back().subset;
                 sub_from = jobs.back().from;
-               threads.emplace_back([this, &subset, &result, sub_from, current, i]{
+                threads.emplace_back([this, &subset, &result, sub_from, current, i]{
                     this->contains_t(subset[i], result, sub_from, CHILD(current, i));
                 });
+            }else{
+                while(jobs.size()){
+                    const auto worker_job = jobs.back().f;
+                    threads.emplace_back([worker_job]{worker_job();});
+                    jobs.pop_back();
+                    --free_workers;
+                }
             }
             for(auto& t : threads) t.join();
         }else{

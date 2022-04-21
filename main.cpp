@@ -40,7 +40,7 @@ int main() { /* SPANGLICHHHH GAAAAA */
     
     /* TEST PARALLEL LOOKUP + PARALLEL INSERT */
     {
-        Set4Batches<uint32_t, 32, 4> tree;
+        Set4Batches<uint32_t, 32, 3> tree;
         tree.insert(datos1);
         tree.insert(datos2);
         const auto result1 = tree.contains(datos1); for(auto const& r : result1) if(r.exists == false) exit(0);
