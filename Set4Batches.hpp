@@ -45,12 +45,6 @@ class Set4Batches{
     using Pointer = Node*;
     static constexpr Pointer null = 0;
 
-    struct Job{
-        int subset;
-        std::function<void(void)> f;
-        int from;
-    };
-
     Pointer root;
     unsigned size;
     unsigned new_lvls;
