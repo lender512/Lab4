@@ -33,3 +33,6 @@
 
 main
 .idea/
+.DS_Store
+# Ignore every .DS_Store
+output.txt

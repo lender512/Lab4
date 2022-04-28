@@ -38,23 +38,22 @@ int main(int argc, char **argv) {
 
     int sort = {{SORT}}; // 0 - unordered 1 - ordered 2 - reverse ordered
                          //
-    if (sort == 1) {
-      std::sort(data.begin(), data.end());
-    }
-
-    if (sort == 2) {
-      std::sort(data.begin(), data.end());
-      std::reverse(data.begin(), data.end());
-    }
-
     Set4Batches<uint32_t, {{DEGREE}}, {{THREADS}}> treeP(helper_data);
     for (int i = 0; i < N; i += 1000) {
       // create a sub vector of 1000 elements
-      auto parallel = measure(1, [&treeP, &data, i] {
-        std::vector<uint32_t> subVector(data.begin() + i,
-                                        data.begin() + i + 1000);
-        treeP.insert(subVector);
-      });
+      std::vector<uint32_t> subVector(data.begin() + i,
+                                      data.begin() + i + 1000);
+      if (sort == 1) {
+        std::sort(subVector.begin(), subVector.end());
+      }
+
+      if (sort == 2) {
+        std::sort(subVector.begin(), subVector.end());
+        std::reverse(subVector.begin(), subVector.end());
+      }
+
+      auto parallel = measure(
+          1, [&treeP, &data, i, &subVector]() { treeP.insert(subVector); });
       std::cout << parallel << std::endl;
     }
   }
@@ -126,10 +125,13 @@ int main(int argc, char **argv) {
 
   if ({{EXPERIMENT}} == 4) {
     int N = 10000000;
-    std::vector<uint32_t> helper_data(N / {{DEGREE}});
+    uint32_t NN = N * 10;
+
+    std::vector<uint32_t> helper_data(NN / {{DEGREE}});
+    int operation = {{SORT}}; // 0 - contains | 1 - insert | 2 - erase
 
     {
-      for (int i = 0; i < N / {{DEGREE}}; ++i)
+      for (uint32_t i = 0; i < NN / {{DEGREE}}; ++i)
         helper_data[i] = i * {{DEGREE}};
     }
 
@@ -144,10 +146,25 @@ int main(int argc, char **argv) {
         }
     }
 
-    Set4Batches<uint32_t, {{DEGREE}}, {{THREADS}}> treeP(helper_data);
-    treeP.insert(data);
-    auto parallel =
-        measure(1, [&treeP, &data] { auto r = treeP.contains(data); });
-    std::cout << parallel / 1000 << std::endl;
+    if (operation == 0) {
+      Set4Batches<uint32_t, {{DEGREE}}, {{THREADS}}> treeP(helper_data);
+      treeP.insert(data);
+      auto parallel =
+          measure(1, [&treeP, &data] { auto r = treeP.contains(data); });
+      std::cout << parallel / 1000 << std::endl;
+    }
+    if (operation == 1) {
+      Set4Batches<uint32_t, {{DEGREE}}, {{THREADS}}> treeP(helper_data);
+      auto parallel =
+          measure(1, [&treeP, &data] { treeP.insert(data); });
+      std::cout << parallel / 1000 << std::endl;
+    }
+    if (operation == 2) {
+      Set4Batches<uint32_t, {{DEGREE}}, {{THREADS}}> treeP(helper_data);
+      treeP.insert(data);
+      auto parallel =
+          measure(1, [&treeP, &data] { treeP.erase(data); });
+      std::cout << parallel / 1000 << std::endl;
+    }
   }
 }
